@@ -114,6 +114,23 @@ describe('client bundle activation', () => {
     expect(String(thrown)).not.toContain('pnpm run build')
   })
 
+  it('composes the boot graph without a webServer', () => {
+    const packageName = '@fixture/graph-without-webserver'
+    const clientPath = writePackage(packageName)
+    mkdirSync(dirname(clientPath), { recursive: true })
+    writeFileSync(clientPath, 'module.exports = {}\n')
+    const ctx = new Context()
+    ctx.baseUrl = pathToFileURL(root!).href + '/'
+    ctx.provide('loader', {
+      *entries() {
+        yield { options: { name: packageName }, fiber: {}, disabled: false }
+      },
+    })
+    const service = new ClientModuleRegistry(ctx)
+    expect(service.graph().entries.map(entry => entry.id)).toEqual([packageName])
+    expect(service.clientPath(packageName)).toBe(clientPath)
+  })
+
   it('serves the source map beside a registered client bundle', async () => {
     const packageName = '@fixture/source-map'
     const clientPath = writePackage(packageName)
