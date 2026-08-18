@@ -1,0 +1,103 @@
+/** Desktop API carrier: unary invoke plus mux/host JSON downlinks over the preload bridge. */
+
+import type { ApiProxy, HostFrame, MuxFrame, RpcRequest, ServerRequest } from './api.ts'
+import { AbstractApiClient } from './api.ts'
+import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
+import { serverRequestSchema } from '@deepseek-ai/dsh-host-apiproxy/api/rpc.schema'
+import { readDshDesktop, type DshDesktopBridge } from './dsh-desktop.ts'
+
+type SocketItem<F> = { kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }
+type Parser<F> = { parse(value: unknown): F }
+
+function requireDesktop(): DshDesktopBridge {
+  const desktop = readDshDesktop()
+  if (desktop === undefined) throw new Error('client-connection: IpcApiClient requires window.dshDesktop')
+  return desktop
+}
+
+function headersFromInit(init: RequestInit | undefined): Record<string, string> {
+  const headers: Record<string, string> = {}
+  const raw = init?.headers
+  if (raw instanceof Headers) raw.forEach((value, key) => { headers[key] = value })
+  else if (Array.isArray(raw)) for (const [key, value] of raw) headers[key] = value
+  else if (raw !== undefined) for (const [key, value] of Object.entries(raw)) headers[key] = value
+  return headers
+}
+
+/** Browser platform subclass: unary/respond use the preload invoke; mux/host use JSON subscriptions. */
+export class IpcApiClient extends AbstractApiClient {
+  protected async doFetch(input: URL, init?: RequestInit): Promise<Response> {
+    const desktop = requireDesktop()
+    const body = typeof init?.body === 'string' ? init.body : init?.body == null ? null : String(init.body)
+    const reply = await desktop.invoke({
+      url: input.href,
+      method: init?.method ?? 'GET',
+      headers: headersFromInit(init),
+      body,
+    })
+    return new Response(reply.body, { status: reply.status, headers: reply.headers })
+  }
+
+  protected override openMux(
+    _payload: Parameters<ApiProxy['events']['mux']>[0]['payload'],
+    signal: AbortSignal,
+    onOpen?: () => void,
+  ): AsyncIterable<RpcRequest<MuxFrame>> {
+    return this.readIpc('mux', signal, muxFrameSchema, onOpen)
+  }
+
+  protected override openHost(
+    _payload: Parameters<ApiProxy['events']['host']>[0]['payload'],
+    signal: AbortSignal,
+    onOpen?: () => void,
+  ): AsyncIterable<RpcRequest<HostFrame>> {
+    return this.readIpc('host', signal, hostFrameSchema, onOpen)
+  }
+
+  private async *readIpc<F extends MuxFrame | HostFrame>(
+    stream: 'mux' | 'host',
+    signal: AbortSignal,
+    frameSchema: Parser<F>,
+    onOpen?: () => void,
+  ): AsyncGenerator<RpcRequest<F>> {
+    const desktop = requireDesktop()
+    const inbox: SocketItem<F>[] = []
+    let wake: (() => void) | undefined
+    const enqueue = (item: SocketItem<F>): void => {
+      inbox.push(item)
+      wake?.()
+      wake = undefined
+    }
+    const handleJson = (json: string): void => {
+      let full: ServerRequest
+      let frame: F
+      try {
+        full = serverRequestSchema.parse(JSON.parse(json) as unknown)
+        frame = frameSchema.parse(full.payload)
+      } catch (error) {
+        console.error(`[client-connection] dropping malformed IPC frame on ${stream}:`, error)
+        return
+      }
+      this.onEnvelope(full)
+      enqueue({ kind: 'frame', envelope: { rpcId: full.rpcId, payload: frame } })
+    }
+    const unsubscribe = stream === 'mux' ? desktop.onMux(handleJson) : desktop.onHost(handleJson)
+    const handleAbort = (): void => { enqueue({ kind: 'end' }) }
+    signal.addEventListener('abort', handleAbort, { once: true })
+    if (signal.aborted) handleAbort()
+    onOpen?.()
+    try {
+      while (true) {
+        while (inbox.length > 0) {
+          const item = inbox.shift() as SocketItem<F>
+          if (item.kind === 'end') return
+          yield item.envelope
+        }
+        await new Promise<void>((resolve) => { wake = resolve })
+      }
+    } finally {
+      signal.removeEventListener('abort', handleAbort)
+      unsubscribe()
+    }
+  }
+}
