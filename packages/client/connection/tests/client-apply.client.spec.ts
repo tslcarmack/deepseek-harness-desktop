@@ -8,6 +8,7 @@ import { apply, type ConnectionHandle } from '../src/client/index.ts'
 import type { RpcMessage } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
 import { FixtureApiClient } from '../src/client/fixture.ts'
+import { IpcApiClient } from '../src/client/ipc-api-client.ts'
 import { WebApiClient } from '../src/client/web-api-client.ts'
 
 type Win = { location?: { hostname: string; search: string; origin?: string } }
@@ -49,6 +50,7 @@ class FakeWebSocket extends EventTarget {
 
 afterEach(() => {
   delete (globalThis as Win).location
+  delete (globalThis as { dshDesktop?: unknown }).dshDesktop
   sockets.length = 0
   if (originalWebSocket === undefined) delete (globalThis as WebSocketGlobal).WebSocket
   else globalThis.WebSocket = originalWebSocket
@@ -63,6 +65,19 @@ async function mount(): Promise<ConnectionHandle> {
 }
 
 describe('connection client apply', () => {
+  it('uses IpcApiClient and reports loopback when the desktop bridge is present', async () => {
+    ;(globalThis as { dshDesktop?: unknown }).dshDesktop = {
+      invoke: async () => ({ status: 200, headers: {}, body: '{}' }),
+      onMux: () => () => {},
+      onHost: () => () => {},
+      loadBundle: async () => '',
+    }
+    ;(globalThis as Win).location = { hostname: '', search: '', origin: 'null' }
+    const handle = await mount()
+    expect(handle.api).toBeInstanceOf(IpcApiClient)
+    expect(handle.isLoopback).toBe(true)
+  })
+
   it('mounts ctx.connection with the real client when no ?fixture switch is present', async () => {
     ;(globalThis as Win).location = { hostname: 'localhost', search: '' }
     const handle = await mount()
