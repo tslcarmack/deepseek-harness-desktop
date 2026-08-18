@@ -38,6 +38,27 @@ export interface DesktopRuntimeImpl extends DesktopRuntime {
    * @returns unsubscriber.
    */
   subscribeHost(listener: (json: string) => void): () => void
+  /**
+   * Run one preload invoke envelope through the installed `/api` fetch handler.
+   * @param request - method, URL, headers, and body from the renderer.
+   * @returns HTTP-shaped status, headers, and body. 503 when no handler is installed.
+   */
+  fetchFromPreload(request: IpcFetchRequest): Promise<IpcFetchResponse>
+}
+
+/** Unary IPC request the renderer sends through the preload bridge. */
+export interface IpcFetchRequest {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body: string | null
+}
+
+/** Unary IPC response the preload bridge returns to the renderer. */
+export interface IpcFetchResponse {
+  status: number
+  headers: Record<string, string>
+  body: string
 }
 
 function clientIdFromBundleUrl(url: string): string {
@@ -82,6 +103,21 @@ export function apply(ctx: Context): void {
     subscribeHost(listener) {
       hostListeners.add(listener)
       return () => { hostListeners.delete(listener) }
+    },
+    async fetchFromPreload(request) {
+      if (apiFetch === undefined) {
+        return {
+          status: 503,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+          body: 'desktop-app: api fetch not installed',
+        }
+      }
+      const init: RequestInit = { method: request.method, headers: request.headers }
+      if (request.body !== null) init.body = request.body
+      const response = await apiFetch(new Request(request.url, init))
+      const headers: Record<string, string> = {}
+      response.headers.forEach((value, key) => { headers[key] = value })
+      return { status: response.status, headers, body: await response.text() }
     },
   }
   ctx.provide('desktopRuntime', runtime)

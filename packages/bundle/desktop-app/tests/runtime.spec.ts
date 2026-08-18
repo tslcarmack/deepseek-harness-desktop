@@ -71,4 +71,57 @@ describe('desktopRuntime glue', () => {
     await expect(runtime.loadBundleSource('/plugins/still-missing/client.js'))
       .rejects.toThrow(/no client bundle for still-missing/)
   })
+
+  it('returns 503 when fetchFromPreload runs before setApiFetch', async () => {
+    const ctx = new Context()
+    apply(ctx)
+    const runtime = ctx.get('desktopRuntime') as DesktopRuntimeImpl
+    await expect(runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/api/session.list',
+      method: 'GET',
+      headers: {},
+      body: null,
+    })).resolves.toEqual({
+      status: 503,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+      body: 'desktop-app: api fetch not installed',
+    })
+  })
+
+  it('forwards preload invoke envelopes through the installed fetch handler', async () => {
+    const ctx = new Context()
+    apply(ctx)
+    const runtime = ctx.get('desktopRuntime') as DesktopRuntimeImpl
+    const seen: Request[] = []
+    runtime.setApiFetch(async (request) => {
+      seen.push(request)
+      return new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    const reply = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/api/session.list',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"id":1}',
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.url).toBe('http://127.0.0.1/api/session.list')
+    expect(seen[0]!.method).toBe('POST')
+    expect(seen[0]!.headers.get('content-type')).toBe('application/json')
+    await expect(seen[0]!.text()).resolves.toBe('{"id":1}')
+    expect(reply.status).toBe(200)
+    expect(reply.body).toBe('{"ok":true}')
+    expect(reply.headers['content-type']).toBe('application/json')
+
+    const getReply = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/api/session.list',
+      method: 'GET',
+      headers: {},
+      body: null,
+    })
+    expect(seen[1]!.method).toBe('GET')
+    expect(getReply.status).toBe(200)
+  })
 })
