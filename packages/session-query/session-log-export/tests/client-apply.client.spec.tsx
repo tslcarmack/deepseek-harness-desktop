@@ -52,6 +52,18 @@ describe('session-log-download browser plugin', () => {
     expect(b.slots.entries('conversation.session.header.utilities')).toHaveLength(0)
   })
 
+  it('does not import desktop invoke helpers', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { pathToFileURL } = await import('node:url')
+    const src = readFileSync(
+      new URL('packages/session-query/session-log-export/src/client/index.ts', pathToFileURL(`${process.cwd()}/`)),
+      'utf8',
+    )
+    expect(src).not.toMatch(/desktop-fetch/)
+    expect(src).not.toMatch(/desktopDoFetch/)
+    expect(src).not.toMatch(/readDesktopInvoke/)
+  })
+
   it('downloads only for an export execution acknowledged by this browser client', async () => {
     const fetcher = vi.fn(async () => new Response('', { status: 500 }))
     vi.stubGlobal('fetch', fetcher)

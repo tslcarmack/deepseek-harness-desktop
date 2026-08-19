@@ -11,6 +11,7 @@ import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { RpcId, type ClientRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { WebServer, WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { API_PATH, apply, HOST_EVENTS_PATH, inject, MUX_EVENTS_PATH, type HostConnectionHandle } from '../src/index.ts'
+import type { DesktopRuntime } from '../src/desktop-runtime.ts'
 
 /** Structural webServer fake recording both route registries. */
 function fakeHttpServer(
@@ -491,5 +492,130 @@ describe('connection node half over a real HTTP server', () => {
       await close()
       await dispose()
     }
+  })
+})
+
+/** Minimal ApiProxy: session.list plus empty event streams for IPC downlinks. */
+function fakeDesktopApiProxy(): ApiProxy {
+  async function *empty(_payload: unknown, signal: AbortSignal): AsyncGenerator<never> {
+    if (signal.aborted) return
+  }
+  return {
+    sessions: {
+      async list(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { items: [] } } }
+      },
+    },
+    events: {
+      mux: empty,
+      host: empty,
+    },
+  } as unknown as ApiProxy
+}
+
+describe('connection node half desktopRuntime', () => {
+  it('fails loud when neither webServer nor desktopRuntime is present', async () => {
+    const ctx = new Context()
+    await expect(ctx.plugin({ apply, inject: [] })).rejects.toThrow(/webServer or desktopRuntime/)
+  })
+
+  it('installs api fetch on desktopRuntime and does not register HTTP routes', async () => {
+    const frames: { stream: string; json: string }[] = []
+    let fetch: ((request: Request) => Promise<Response>) | undefined
+    const ctx = new Context()
+    ctx.provide('desktopRuntime', {
+      setApiFetch(next) {
+        fetch = next
+        return () => { fetch = undefined }
+      },
+      sendFrame(stream, json) { frames.push({ stream, json }) },
+    } satisfies DesktopRuntime)
+    ctx.provide('apiProxy', fakeDesktopApiProxy())
+    await ctx.plugin({ name: 'client-connection', apply, inject: [] })
+    expect(fetch).toBeTypeOf('function')
+    const response = await fetch!(new Request('http://dsh.internal/api/session.list', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: 'rpc_test',
+        method: 'session.list',
+        payload: {},
+      }),
+    }))
+    expect(response.ok).toBe(true)
+  })
+
+  it('lets the preload bridge reach privileged host.pickDirectory without an HTTP Host header', async () => {
+    let fetch: ((request: Request) => Promise<Response>) | undefined
+    const ctx = new Context()
+    ctx.provide('desktopRuntime', {
+      setApiFetch(next) {
+        fetch = next
+        return () => { fetch = undefined }
+      },
+      sendFrame() {},
+    } satisfies DesktopRuntime)
+    ctx.provide('apiProxy', {
+      ...fakeDesktopApiProxy(),
+      host: {
+        async pickDirectory(request: { rpcId: string }) {
+          return { rpcId: request.rpcId, result: { ok: true, value: { path: 'C:\\picked' } } }
+        },
+      },
+    } as unknown as ApiProxy)
+    await ctx.plugin({ name: 'client-connection', apply, inject: [] })
+    const response = await fetch!(new Request('http://dsh.internal/api/host.pickDirectory', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'null' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: 'rpc_pick',
+        method: 'host.pickDirectory',
+        payload: {},
+      }),
+    }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      rpcId: 'rpc_pick',
+      result: { ok: true, value: { path: 'C:\\picked' } },
+    })
+  })
+
+  it('dispatches claimed /api remotes through desktop IPC the same as HTTP', async () => {
+    let fetch: ((request: Request) => Promise<Response>) | undefined
+    const ctx = new Context()
+    ctx.provide('desktopRuntime', {
+      setApiFetch(next) {
+        fetch = next
+        return () => { fetch = undefined }
+      },
+      sendFrame() {},
+    } satisfies DesktopRuntime)
+    ctx.provide('apiProxy', fakeDesktopApiProxy())
+    await ctx.plugin({ name: 'client-connection', apply, inject: [] })
+    const connection = ctx.get('connection') as HostConnectionHandle
+    const remove = connection.rpc.intercept(
+      '/api',
+      endpoint => endpoint === 'pluginInventory/list',
+      async () => ({ ok: true, value: { entries: [] } }),
+      { authority: 'trusted-host' },
+    )
+    const response = await fetch!(new Request('http://dsh.internal/api/pluginInventory/list', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: 'rpc_inv',
+        method: 'pluginInventory/list',
+        payload: { args: {} },
+      }),
+    }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      rpcId: 'rpc_inv',
+      result: { ok: true, value: { entries: [] } },
+    })
+    await remove()
   })
 })

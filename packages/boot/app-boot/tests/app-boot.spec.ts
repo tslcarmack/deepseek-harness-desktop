@@ -558,6 +558,24 @@ describe('boot', () => {
     }
   })
 
+  it('hands an absolute plugin path to Node as a file URL', async () => {
+    const dir = tmp()
+    const plugin = join(dir, 'absolute.mjs')
+    writeFileSync(plugin, 'export function apply(ctx) { ctx.provide("absolutePluginLoaded", true) }\n')
+    writeFileSync(join(dir, 'cordis.yml'), `- id: absolute\n  name: ${JSON.stringify(plugin)}\n`)
+    let imported: ReturnType<typeof vi.spyOn> | undefined
+    const ctx = await boot(NAME, join(dir, 'cordis.yml'), undefined, (hostCtx) => {
+      imported = vi.spyOn(hostCtx.loader.internal!, 'import')
+    })
+    try {
+      expect(ctx.get('absolutePluginLoaded')).toBe(true)
+      expect(imported).toHaveBeenCalledWith(pathToFileURL(plugin).href, expect.any(String), {})
+    } finally {
+      imported?.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('can resolve bare plugins from the harness when the config project shadows their package name', async () => {
     const dir = tmp()
     const harness = tmp()

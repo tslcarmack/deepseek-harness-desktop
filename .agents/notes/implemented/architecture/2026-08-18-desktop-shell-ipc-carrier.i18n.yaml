@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-18-desktop-shell-ipc-carrier.md
+2026-08-18-desktop-shell-ipc-carrier.md: da766337ff4dcf93676ddf14f777ddb08987ab03
+2026-08-18-desktop-shell-ipc-carrier.zh.md: 10363daba0d3c05f17fd393657238c14664472d1

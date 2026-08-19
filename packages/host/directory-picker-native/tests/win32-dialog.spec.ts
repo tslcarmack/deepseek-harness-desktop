@@ -9,6 +9,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { pickWin32Directory, type Win32DialogInternals, type Win32DialogWorkerLike } from '../src/win32-dialog.ts'
+import { dialogWorkerEnv } from '../src/win32-dialog-host.ts'
 import type { Win32DialogWorkerMessage } from '../src/win32-dialog-worker.ts'
 
 class FakeWorker extends EventEmitter implements Win32DialogWorkerLike {
@@ -40,6 +41,15 @@ function harness(overrides: Partial<Win32DialogInternals> = {}): Harness {
 }
 
 const live = (): AbortSignal => new AbortController().signal
+
+describe('dialogWorkerEnv', () => {
+  it('sets ELECTRON_RUN_AS_NODE so an Electron parent still spawns a Node child', () => {
+    const env = dialogWorkerEnv('Select Workspace Directory', { FOO: 'bar' })
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(env.DSH_DIALOG_TITLE).toBe('Select Workspace Directory')
+    expect(env.FOO).toBe('bar')
+  })
+})
 
 describe('pickWin32Directory', () => {
   it('resolves the selected path and the cancellation null', async () => {

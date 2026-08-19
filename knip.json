@@ -726,6 +726,28 @@
         "react-dom"
       ]
     },
+    "apps/desktop": {
+      "entry": [
+        "src/main.ts",
+        "src/preload.ts",
+        "src/renderer.ts",
+        "tests/**/*.spec.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-web-react",
+        "@types/react",
+        "@types/react-dom",
+        "react",
+        "react-dom",
+        "tsx"
+      ]
+    },
     "apps/cli": {
       "entry": [
         "tests/**/*.spec.ts",
@@ -779,6 +801,11 @@
       ]
     },
     "packages/bundle/web-app": {
+      "ignoreDependencies": [
+        "@deepseek-ai/.+"
+      ]
+    },
+    "packages/bundle/desktop-app": {
       "ignoreDependencies": [
         "@deepseek-ai/.+"
       ]

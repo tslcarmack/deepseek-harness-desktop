@@ -28,6 +28,9 @@ describe('parseDshArgs', () => {
     expect(parse(['web'])).toEqual({ mode: 'profile', profile: 'web', patches: [], args: [] })
     expect(parse(['web', '--patch', 'web.yml']))
       .toEqual({ mode: 'profile', profile: 'web', patches: ['web.yml'], args: [] })
+    expect(parse(['desktop'])).toEqual({ mode: 'profile', profile: 'desktop', patches: [], args: [] })
+    expect(parse(['desktop', '--patch', 'desk.yml']))
+      .toEqual({ mode: 'profile', profile: 'desktop', patches: ['desk.yml'], args: [] })
   })
 
   it('ends the launcher flags at the first token it does not own', () => {
@@ -68,6 +71,10 @@ describe('parseDshArgs', () => {
       .toEqual({ mode: 'dump-config', profile: 'web', defaultOnly: false, patches: [] })
     expect(parse(['web', '--dump-default-config']))
       .toEqual({ mode: 'dump-config', profile: 'web', defaultOnly: true, patches: [] })
+    expect(parse(['desktop', '--dump-config']))
+      .toEqual({ mode: 'dump-config', profile: 'desktop', defaultOnly: false, patches: [] })
+    expect(parse(['desktop', '--dump-default-config']))
+      .toEqual({ mode: 'dump-config', profile: 'desktop', defaultOnly: true, patches: [] })
   })
 
   it('rejects missing profile, removed flags, and contradictory inputs', () => {

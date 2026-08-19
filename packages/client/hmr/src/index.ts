@@ -24,8 +24,8 @@ export { EVENTS_ENDPOINT } from './events.ts'
 /** Cordis plugin name. */
 export const name = 'client-hmr'
 
-/** Required services: the web plugin table and the route registry. */
-export const inject = ['clientModules', 'webServer']
+/** Required services: the web plugin table. SSE mounts when `webServer` appears. */
+export const inject = ['clientModules']
 
 /** Plugin config, validated by the same-named schemastery schema. */
 export interface Config {
@@ -51,7 +51,7 @@ interface WatchedBundle {
 
 /**
  * Mount the dev chain: bundle watches, rebuilt reporting, and the SSE channel.
- * @param ctx - host plugin context carrying clientModuleHost and webServer.
+ * @param ctx - host plugin context carrying clientModules; `webServer` is optional.
  * @param config - validated {@link Config}.
  */
 export function apply(ctx: Context, config: Config): void {
@@ -163,29 +163,34 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   ctx.effect(() => {
-    const disposeRoute = ctx.webServer.register({
-      kind: 'exact',
-      path: EVENTS_ENDPOINT,
-      handler: (req, res) => {
-        // Named routes match ahead of the carrier's method gate; keep the old
-        // global 405 semantics for non-GET hits on this endpoint.
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-          res.writeHead(405)
-          res.end()
-          return
-        }
-        connect(res)
-      },
-    })
     const unsubscribe = ctx.clientModules.onRebuilt((id, rev) => {
       const line = sseData({ type: 'rebuilt', id, rev })
       for (const res of connections) res.write(line)
     })
-    return () => {
-      unsubscribe()
-      disposeRoute()
-      for (const res of connections) res.destroy()
-      connections.clear()
-    }
-  }, 'client-hmr: /plugins/events channel')
+    return () => { unsubscribe() }
+  }, 'client-hmr: rebuilt fanout')
+
+  ctx.inject(['webServer'], (httpCtx) => {
+    httpCtx.effect(() => {
+      const disposeRoute = httpCtx.webServer.register({
+        kind: 'exact',
+        path: EVENTS_ENDPOINT,
+        handler: (req, res) => {
+          // Named routes match ahead of the carrier's method gate; keep the old
+          // global 405 semantics for non-GET hits on this endpoint.
+          if (req.method !== 'GET' && req.method !== 'HEAD') {
+            res.writeHead(405)
+            res.end()
+            return
+          }
+          connect(res)
+        },
+      })
+      return () => {
+        disposeRoute()
+        for (const res of connections) res.destroy()
+        connections.clear()
+      }
+    }, 'client-hmr: /plugins/events channel')
+  })
 }

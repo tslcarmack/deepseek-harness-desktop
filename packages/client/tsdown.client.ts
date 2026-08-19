@@ -98,9 +98,10 @@ export function clientBundle(
   const lib = clientLibraryConfig(id, libEntry, options.lib)
   return ({ env }) => {
     const face = buildFace(env?.DSH_BUILD_FACE)
-    const client = clientConfig(id, face === undefined
-      ? 'src/client/index.ts'
-      : 'lib/types/client/index.js')
+    const client = clientConfig(
+      id,
+      options.clientEntry ?? (face === undefined ? 'src/client/index.ts' : 'lib/types/client/index.js'),
+    )
     const node = [lib, ...(options.companions ?? [])]
     if (face === 'host') return options.hostPhase === true ? node : [SKIP_WORKSPACE_BUILD]
     if (face === 'client') return options.hostPhase === true ? [client] : [...node, client]
@@ -137,6 +138,8 @@ interface ClientBundleOptions {
   readonly companions?: readonly UserConfig[]
   /** Overrides for the package's primary Node-side library config. */
   readonly lib?: UserConfig
+  /** Browser entry. When set, both the unset face and the Client face compile this path instead of `lib/types/client/index.js`. */
+  readonly clientEntry?: string
 }
 
 type BuildFace = 'host' | 'client' | undefined

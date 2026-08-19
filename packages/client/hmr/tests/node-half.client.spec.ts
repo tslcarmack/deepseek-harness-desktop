@@ -90,7 +90,7 @@ describe('hmr node half', () => {
     const routes: WebRoute[] = []
     const fiber = await mount(clientModuleHost, fakeHttpServer(routes))
 
-    expect(routes).toHaveLength(1)
+    await vi.waitFor(() => { expect(routes).toHaveLength(1) })
     expect(routes[0]).toMatchObject({ kind: 'exact', path: EVENTS_ENDPOINT })
     expect(clientModuleHost.rebuiltCalls).toEqual(['pkg-a'])
     clientModuleHost.rebuiltCalls.length = 0
@@ -199,6 +199,39 @@ describe('hmr node half', () => {
     const fiber = await mount(clientModuleHost, fakeHttpServer([]))
 
     await vi.waitFor(() => { expect(clientModuleHost.rebuiltCalls).toEqual(['pkg-a', 'pkg-a']) }, { timeout: 3_000 })
+    await fiber.dispose()
+  })
+
+  it('watches bundles without a webServer and does not register an SSE route', async () => {
+    const bundle = join(dir, 'a.js')
+    writeFileSync(bundle, 'v1')
+    const clientModuleHost = fakeClientModuleHost(new Map([['pkg-a', bundle]]))
+    const ctx = new Context()
+    ctx.provide('clientModules', clientModuleHost)
+    const fiber = ctx.plugin(
+      { inject: [...inject], Config, apply },
+      { pollIntervalMs: POLL_MS },
+    )
+    await fiber.await()
+    expect(clientModuleHost.rebuiltCalls).toEqual(['pkg-a'])
+    await fiber.dispose()
+  })
+
+  it('registers the SSE route when webServer appears after apply', async () => {
+    const bundle = join(dir, 'a.js')
+    writeFileSync(bundle, 'v1')
+    const clientModuleHost = fakeClientModuleHost(new Map([['pkg-a', bundle]]))
+    const ctx = new Context()
+    ctx.provide('clientModules', clientModuleHost)
+    const fiber = ctx.plugin(
+      { inject: [...inject], Config, apply },
+      { pollIntervalMs: POLL_MS },
+    )
+    await fiber.await()
+    const routes: WebRoute[] = []
+    ctx.provide('webServer', fakeHttpServer(routes))
+    await vi.waitFor(() => { expect(routes).toHaveLength(1) })
+    expect(routes[0]).toMatchObject({ kind: 'exact', path: EVENTS_ENDPOINT })
     await fiber.dispose()
   })
 })

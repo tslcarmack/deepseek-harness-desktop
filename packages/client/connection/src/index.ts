@@ -10,6 +10,8 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
+import { IpcDownlinks } from './ipc-downlink.ts'
+import type {} from './desktop-runtime.ts'
 
 export type {
   ConnectionRpcAuthority,
@@ -22,6 +24,7 @@ export type {
 export { HostConnectionService } from './rpc-host.ts'
 
 export { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
+export type { DesktopRuntime } from './desktop-runtime.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'client-connection'
@@ -44,7 +47,7 @@ function assertImageBodyCapacity(ctx: Context, maxRequestBodyBytes: number): voi
 }
 
 /** Services required before providing Connection; API Proxy is an optional `/api` fallback. */
-export const inject = ['webServer']
+export const inject: string[] = []
 
 /** Plugin config: the deployment's non-loopback serving authorities. */
 export interface ConnectionConfig {
@@ -119,15 +122,46 @@ const PRIVILEGED_METHODS = new Set([
 ])
 
 /**
- * Mounts the API gateway under the browser transport prefix. Every request on
- * the prefix passes the browser-trust fence first (DNS-rebinding and
- * cross-site defense — [api-request-trust](./api-request-trust.ts));
- * privileged methods additionally pass it with an empty trust list, which
- * pins them to loopback.
+ * Rewrite a preload-bridge Request so the loopback Host fence can read it.
+ * @param request - the renderer invoke, typically without a Host header.
+ * @returns a new Request on `http://127.0.0.1` with Host stamped and page Origin stripped.
+ */
+function toDesktopLoopbackRequest(request: Request): Request {
+  const url = new URL(request.url)
+  const headers = new Headers(request.headers)
+  headers.set('host', '127.0.0.1')
+  headers.delete('origin')
+  headers.delete('referer')
+  headers.delete('sec-fetch-site')
+  const init: RequestInit = { method: request.method, headers }
+  if (request.body !== null) {
+    Object.assign(init, { body: request.body, duplex: 'half' })
+  }
+  return new Request(`http://127.0.0.1${url.pathname}${url.search}`, init)
+}
+
+/**
+ * Mounts the API gateway under the browser transport prefix, or binds the
+ * same handler to `desktopRuntime` when no HTTP server is present. Every
+ * HTTP request on the prefix passes the browser-trust fence first
+ * (DNS-rebinding and cross-site defense —
+ * [api-request-trust](./api-request-trust.ts)); privileged methods
+ * additionally pass it with an empty trust list, which pins them to
+ * loopback. Desktop IPC rewrites the URL to `http://127.0.0.1/api/…` and
+ * stamps `Host: 127.0.0.1` (a Fetch `Request` has no Host header, unlike
+ * Node's IncomingMessage) so that fence still applies; renderer `Origin`
+ * (`null` on `file:`) is dropped because the preload bridge, not the page
+ * origin, is the privilege. The rewritten request then enters the same
+ * shared `/api` handler Web uses (Typert interceptors, then ApiProxy).
  * @param ctx - Host plugin context.
  * @param config - resolved plugin config (schema defaults applied).
  */
 export function apply(ctx: Context, config?: ConnectionConfig): void {
+  const webServer = ctx.get('webServer')
+  const desktopRuntime = ctx.get('desktopRuntime')
+  if (webServer === undefined && desktopRuntime === undefined) {
+    throw new Error('client-connection: needs webServer or desktopRuntime')
+  }
   // The Loader resolves schema defaults; hand-built test contexts may pass none.
   const trustedHosts = config?.trustedHosts ?? []
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
@@ -158,39 +192,48 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
       return toFetchHandler(apiProxy).fetch(request)
     },
   })
-  const route: WebRoute = {
-    kind: 'prefix',
-    path: API_PATH,
-    handler: async (req, res) => {
-      if (!isTrustedApiRequest(req, trustedHosts)) {
-        res.writeHead(403)
-        res.end('forbidden')
-        return
-      }
-      await bridge(req, res, fetchHandler, maxRequestBodyBytes)
-    },
-  }
-  ctx.effect(() => ctx.webServer.register(route), 'client-connection: /api route')
-  ctx.inject(['apiProxy'], (apiCtx) => {
-    assertImageBodyCapacity(apiCtx, maxRequestBodyBytes)
-    const downlinks = new WebSocketDownlinks(apiCtx.apiProxy)
-    const registerDownlink = (
-      path: string,
-      handle: WebUpgradeRoute['handler'],
-    ): void => {
-      apiCtx.effect(() => apiCtx.webServer.registerUpgrade({
-        path,
-        handler: (req, socket, head) => {
-          if (!isTrustedApiRequest(req, trustedHosts)) {
-            rejectWebSocketUpgrade(socket)
-            return
-          }
-          return handle(req, socket, head)
-        },
-      }), `client-connection: ${path} WebSocket`)
+  if (webServer !== undefined) {
+    const route: WebRoute = {
+      kind: 'prefix',
+      path: API_PATH,
+      handler: async (req, res) => {
+        if (!isTrustedApiRequest(req, trustedHosts)) {
+          res.writeHead(403)
+          res.end('forbidden')
+          return
+        }
+        await bridge(req, res, fetchHandler, maxRequestBodyBytes)
+      },
     }
-    apiCtx.effect(() => () => downlinks.close(), 'client-connection: WebSocket downlinks')
-    registerDownlink(MUX_EVENTS_PATH, (req, socket, head) => { downlinks.handleMux(req, socket, head) })
-    registerDownlink(HOST_EVENTS_PATH, (req, socket, head) => { downlinks.handleHost(req, socket, head) })
-  })
+    ctx.effect(() => webServer.register(route), 'client-connection: /api route')
+    ctx.inject(['apiProxy'], (apiCtx) => {
+      assertImageBodyCapacity(apiCtx, maxRequestBodyBytes)
+      const downlinks = new WebSocketDownlinks(apiCtx.apiProxy)
+      const registerDownlink = (
+        path: string,
+        handle: WebUpgradeRoute['handler'],
+      ): void => {
+        apiCtx.effect(() => webServer.registerUpgrade({
+          path,
+          handler: (req, socket, head) => {
+            if (!isTrustedApiRequest(req, trustedHosts)) {
+              rejectWebSocketUpgrade(socket)
+              return
+            }
+            return handle(req, socket, head)
+          },
+        }), `client-connection: ${path} WebSocket`)
+      }
+      apiCtx.effect(() => () => downlinks.close(), 'client-connection: WebSocket downlinks')
+      registerDownlink(MUX_EVENTS_PATH, (req, socket, head) => { downlinks.handleMux(req, socket, head) })
+      registerDownlink(HOST_EVENTS_PATH, (req, socket, head) => { downlinks.handleHost(req, socket, head) })
+    })
+  }
+  if (desktopRuntime !== undefined) {
+    ctx.effect(() => desktopRuntime.setApiFetch(request => fetchHandler.fetch(toDesktopLoopbackRequest(request))), 'client-connection: desktop ipc fetch')
+    ctx.inject(['apiProxy'], (apiCtx) => {
+      const downlinks = new IpcDownlinks(apiCtx.apiProxy, desktopRuntime)
+      apiCtx.effect(() => downlinks.start(), 'client-connection: ipc downlinks')
+    })
+  }
 }
