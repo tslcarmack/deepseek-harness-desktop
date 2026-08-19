@@ -11,6 +11,7 @@
   "references": [
     { "path": "../../../vendor/cordis" },
     { "path": "../../host/apiproxy" },
-    { "path": "../../client/connection/tsconfig.client.json" }
+    { "path": "../../client/connection/tsconfig.client.json" },
+    { "path": "../../session-query/session-log-export" }
   ]
 }

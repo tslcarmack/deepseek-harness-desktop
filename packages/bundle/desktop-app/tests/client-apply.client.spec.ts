@@ -21,11 +21,16 @@ function bridge(invoke: () => Promise<{ status: number; headers: Record<string, 
   }
 }
 
+function stubSessionLogDownload(ctx: Context): void {
+  ctx.provide('sessionLogDownload', { adoptBlobTransport() {} })
+}
+
 describe('desktop-app client apply', () => {
   it('provides IpcApiClient and reports loopback when the desktop bridge is present', async () => {
     ;(globalThis as { dshDesktop?: unknown }).dshDesktop = bridge(async () => ({ status: 200, headers: {}, body: '{}' }))
     ;(globalThis as Win).location = { hostname: '', search: '', origin: 'null' }
     const ctx = new Context()
+    stubSessionLogDownload(ctx)
     await ctx.plugin({ apply, inject })
     const handle = ctx.get('connection') as ConnectionHandle | undefined
     expect(handle).toBeDefined()
@@ -49,6 +54,7 @@ describe('desktop-app client apply', () => {
     ;(globalThis as { dshDesktop?: unknown }).dshDesktop = bridge(invoke)
     const fetch = vi.spyOn(globalThis, 'fetch')
     const ctx = new Context()
+    stubSessionLogDownload(ctx)
     await ctx.plugin({ apply, inject })
     const handle = ctx.get('connection') as ConnectionHandle
     try {

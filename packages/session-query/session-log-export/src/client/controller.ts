@@ -20,6 +20,9 @@ export interface SessionLogDownloadState {
 type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>
 type Save = (url: string, filename: string) => void
 
+/** How the controller turns a successful host response into a browser save. */
+export type SessionLogSaveMode = 'href' | 'blob'
+
 const INITIAL: SessionLogDownloadState = { bySession: {} }
 
 /**
@@ -33,7 +36,7 @@ export function sessionLogZipFilename(sessionId: SessionId): string {
 
 /**
  * Hand a Host download URL to the browser download manager.
- * @param url - same-origin Host download URL.
+ * @param url - same-origin Host download URL or a blob object URL.
  * @param filename - browser download filename.
  */
 export function downloadUrl(url: string, filename: string): void {
@@ -53,6 +56,12 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+async function throwIfNotOk(response: Response): Promise<void> {
+  if (response.ok) return
+  const detail = await response.text().catch(() => '')
+  throw new Error(`Export failed: HTTP ${response.status}${detail === '' ? '' : ` ${detail}`}`)
+}
+
 /** Owns one in-flight browser download per Session and publishes modal state. */
 export class SessionLogDownloadController {
   /** uSES-safe state source shared by every Session-scoped modal contribution. */
@@ -62,13 +71,24 @@ export class SessionLogDownloadController {
   private disposed = false
 
   /**
-   * @param fetcher - HTTP carrier used to read the host-streamed ZIP.
+   * @param fetcher - HTTP or IPC carrier used to probe or read the host-streamed ZIP.
    * @param save - browser save operation.
+   * @param saveMode - `href` hands the GET URL to the download manager after HEAD; `blob` GETs the ZIP and saves an object URL.
    */
   constructor(
-    private readonly fetcher: Fetch = (input, init) => fetch(input, init),
+    private fetcher: Fetch = (input, init) => fetch(input, init),
     private readonly save: Save = downloadUrl,
+    private saveMode: SessionLogSaveMode = 'href',
   ) {}
+
+  /**
+   * Switch this controller onto IPC GET + blob object-URL save (desktop has no HTTP download manager).
+   * @param fetcher - unary fetch that returns ZIP bytes (desktop preload invoke).
+   */
+  adoptBlobTransport(fetcher: Fetch): void {
+    this.fetcher = fetcher
+    this.saveMode = 'blob'
+  }
 
   /**
    * Download one Session tree; concurrent gestures for the same Session share one operation.
@@ -114,12 +134,21 @@ export class SessionLogDownloadController {
       const url = new URL('/api/session.export', hostBase())
       url.searchParams.set('sessionId', sessionId)
       url.searchParams.set('includeDescendants', 'true')
-      const response = await this.fetcher(url, { method: 'HEAD', signal })
-      if (!response.ok) {
-        const detail = await response.text().catch(() => '')
-        throw new Error(`Export failed: HTTP ${response.status}${detail === '' ? '' : ` ${detail}`}`)
+      const filename = sessionLogZipFilename(sessionId)
+      if (this.saveMode === 'blob') {
+        const response = await this.fetcher(url, { method: 'GET', signal })
+        await throwIfNotOk(response)
+        const objectUrl = URL.createObjectURL(await response.blob())
+        try {
+          this.save(objectUrl, filename)
+        } finally {
+          URL.revokeObjectURL(objectUrl)
+        }
+      } else {
+        const response = await this.fetcher(url, { method: 'HEAD', signal })
+        await throwIfNotOk(response)
+        this.save(url.toString(), filename)
       }
-      this.save(url.toString(), sessionLogZipFilename(sessionId))
       const open = this.store.getSnapshot().bySession[String(sessionId)]?.open ?? true
       this.publish(sessionId, { open, status: 'success', error: null })
     } catch (error: unknown) {

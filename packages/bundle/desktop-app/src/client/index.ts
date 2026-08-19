@@ -2,7 +2,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
+import type {} from '@deepseek-ai/dsh-session-log-export/client'
 import { IpcApiClient, ipcDoFetch } from './ipc-api-client.ts'
+import { desktopDoFetch } from './desktop-fetch.ts'
 import { readDshDesktop } from './dsh-desktop.ts'
 import { createConnectionHandle } from './handle.ts'
 import { createWebConnectionRpc } from './rpc.ts'
@@ -24,4 +26,10 @@ export function apply(ctx: Context): void {
   const api = new IpcApiClient()
   const handle: ConnectionHandle = createConnectionHandle(api, createWebConnectionRpc(ipcDoFetch), true)
   ctx.provide('connection', handle)
+  ctx.plugin({
+    inject: ['sessionLogDownload'],
+    apply: (inner: Context) => {
+      inner.sessionLogDownload.adoptBlobTransport(desktopDoFetch)
+    },
+  })
 }
