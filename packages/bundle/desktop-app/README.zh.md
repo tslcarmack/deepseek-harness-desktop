@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-dsh 的 Electron 表层组合包。[`cordis.patch.yml`](cordis.patch.yml) 叠在 [`dsh-base`](../base/README.md) 之上：抄 Web 里 GUI 需要的 Host 行（API gateway、workspace、目录选择器、`dsh.client` 花名册），并挂载本包的粘合插件，由它提供 `desktopRuntime`。它不挂 `webserver`、`frontend-static` 或 LAN `trustedHosts`。Electron 主进程就是 harness 进程；渲染进程经 preload 桥走 IPC。[`dsh-web-app`](../web-app/README.md) 仍是同一 base 上的浏览器 HTTP 表层。
+dsh 的 Electron 表层组合包。[`cordis.patch.yml`](cordis.patch.yml) 叠在 [`dsh-base`](../base/README.md) 之上：抄 Web 里 GUI 需要的 Host 行（API gateway、workspace、目录选择器、`dsh.client` 花名册），并挂载本包的粘合插件，由它提供 `desktopRuntime`。它不挂 `webserver`、`frontend-static` 或 LAN `trustedHosts`。Electron 主进程就是 harness 进程；渲染进程经 preload 桥走 IPC。本包声明 `dsh.client` 且 `immediately: true`。该客户端半边经 preload 桥提供 `IpcApiClient`，并把 Session 日志下载切到 blob GET。Web 从不挂载本包。[`dsh-web-app`](../web-app/README.md) 仍是同一 base 上的浏览器 HTTP 表层。
 
 ## 模型体验
 

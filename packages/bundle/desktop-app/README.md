@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The dsh Electron-surface bundle. [`cordis.patch.yml`](cordis.patch.yml) rides over [`dsh-base`](../base/README.md): it copies the Web host rows the GUI needs (API gateway, workspace, directory picker, `dsh.client` roster) and mounts this package's glue plugin, which provides `desktopRuntime`. It does not mount `webserver`, `frontend-static`, or LAN `trustedHosts`. Electron main is the harness process; the renderer talks IPC through the preload bridge. [`dsh-web-app`](../web-app/README.md) remains the browser HTTP surface over the same base.
+The dsh Electron-surface bundle. [`cordis.patch.yml`](cordis.patch.yml) rides over [`dsh-base`](../base/README.md): it copies the Web host rows the GUI needs (API gateway, workspace, directory picker, `dsh.client` roster) and mounts this package's glue plugin, which provides `desktopRuntime`. It does not mount `webserver`, `frontend-static`, or LAN `trustedHosts`. Electron main is the harness process; the renderer talks IPC through the preload bridge. This package declares `dsh.client` with `immediately: true`. That client half provides `IpcApiClient` over the preload bridge and switches Session-log download to blob GET. Web never mounts this package. [`dsh-web-app`](../web-app/README.md) remains the browser HTTP surface over the same base.
 
 ## Model Experience
 

@@ -16,7 +16,7 @@ Electron 主进程 **就是** harness 进程。实况桌面启动时，Node 上�
 
 窗口运行现有 React 客户端插件（`AppWebEntry` + 主机编写的 `dsh.client` 图）。`apps/desktop` 拥有 Electron main、preload，以及注入 `BootSeams.loadBundle` 的薄渲染入口。它不是第二套产品 GUI。
 
-`dsh-client-connection` 仍是一行。节点半边在存在 `webServer` 时把 `toFetchHandler(api)` 绑到 HTTP/WebSocket，存在 `desktopRuntime` 时绑到该服务，两者都不存在则明确失败。客户端半边在存在 `window.dshDesktop` 时构造 `IpcApiClient`，否则保持 `WebApiClient`。Web 上要求 loopback 的特权 RPC，在桌面上改为要求这座 preload 桥（存在桥时 `isLoopback: true`）。经 IPC 重建的 `Request` URL 使用 `http://127.0.0.1/api/...`，让现有 loopback 围栏仍然通过。只有本进程创建的那个 `BrowserWindow` 可以调用 invoke（`event.sender === window.webContents`）。
+`dsh-client-connection` 仍是一行。节点半边在存在 `webServer` 时把 `toFetchHandler(api)` 绑到 HTTP/WebSocket，存在 `desktopRuntime` 时绑到该服务，两者都不存在则明确失败。connection 的客户端半边构造 `WebApiClient`（或 fixture 客户端），并用 `window.fetch` 做 `rpc.call`。当存在 preload 桥且没有 `?fixture` 时，这一半不提供 `connection`。`dsh-desktop-app` 的 immediately 客户端半边提供 `IpcApiClient` 以及经 invoke 的 `rpc.call`。Web 从不挂载 `dsh-desktop-app`，因此 Web 客户端图不会加载 IPC 实现。Web 上要求 loopback 的特权 RPC，在桌面上改为要求这座 preload 桥（存在桥时 `isLoopback: true`）。经 IPC 重建的 Request 使用 URL `http://127.0.0.1/api/...` 并盖上 `Host: 127.0.0.1`（Fetch Request 不像 Node 的 IncomingMessage 那样自带 Host），让现有 loopback 围栏仍然通过；渲染进程的 `Origin` 会被丢掉，因为特权来自 preload 桥而不是 `file:` 页面。改写后的请求再进入 Web 使用的同一套共享 `/api` 处理器（Typert 拦截器，例如 `pluginInventory/list`，然后是 ApiProxy）。一元 IPC 应答把文本正文保持为 UTF-8 字符串，ZIP 和其他非文本正文用 base64（`bodyEncoding: 'base64'`），让字节能通过 structured clone。Session 日志的 blob 保存由同一 desktop-app 半边接管：经 invoke GET `/api/session.export`，再保存 blob object URL。只有本进程创建的那个 `BrowserWindow` 可以调用 invoke（`event.sender === window.webContents`）。
 
 `ClientModuleRegistry` 在不要求 `webServer` 的情况下组成同一份 boot 图，并暴露 `clientPath(id)`。HTTP `/plugins` 和 index tap 仅在存在 `webServer` 时运行。图行 URL 保持 `/plugins/<id>/client.js?rev=...`；桌面 `loadBundle` 经 preload 桥读取该行磁盘上的 `lib/client.js`。preload 在 `AppWebEntry.run()` 之前写入 `window.__DSH_BOOT__`。
 
@@ -38,4 +38,4 @@ WorkBuddy 是壳的参照（Electron 进程、preload 桥、用 `pnpm approve-bu
 
 ## Consequences
 
-Web 的 HTTP/WebSocket 保持不变。桌面复用同一套 ApiProxy handler、四象限信封和客户端插件图，代价是第二条物理载波（`IpcApiClient` + `DesktopRuntime`）以及 connection 节点半边的双绑定。`ClientModuleRegistry` 不再 inject `webServer`，因此没有监听器的组合仍能组成 `window.__DSH_BOOT__`。第一版没有安装包、托盘、菜单、通知、全局快捷键、自动更新、代码签名、IPC 客户端 HMR、Electron `dialog`/`shell` 替换、自定义 `dsh://` HTTP 伪装，或页面级 `fetch`/`WebSocket` polyfill。
+Web 的 HTTP/WebSocket 保持不变，Web 客户端图也不加载 `IpcApiClient`。桌面复用同一套 ApiProxy handler、四象限信封和客户端插件图，代价是第二条物理载波（`dsh-desktop-app` 上的 `IpcApiClient` + `DesktopRuntime`）以及 connection 节点半边的双绑定。`ClientModuleRegistry` 不再 inject `webServer`，因此没有监听器的组合仍能组成 `window.__DSH_BOOT__`。第一版没有安装包、托盘、菜单、通知、全局快捷键、自动更新、代码签名、IPC 客户端 HMR、Electron `dialog`/`shell` 替换、自定义 `dsh://` HTTP 伪装，或页面级 `fetch`/`WebSocket` polyfill。
