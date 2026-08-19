@@ -8,7 +8,6 @@ import { apply, type ConnectionHandle } from '../src/client/index.ts'
 import type { RpcMessage } from '../src/client/api.ts'
 import { RpcId } from '../src/client/api.ts'
 import { FixtureApiClient } from '../src/client/fixture.ts'
-import { IpcApiClient } from '../src/client/ipc-api-client.ts'
 import { WebApiClient } from '../src/client/web-api-client.ts'
 
 type Win = { location?: { hostname: string; search: string; origin?: string } }
@@ -65,7 +64,7 @@ async function mount(): Promise<ConnectionHandle> {
 }
 
 describe('connection client apply', () => {
-  it('uses IpcApiClient and reports loopback when the desktop bridge is present', async () => {
+  it('does not provide connection when the desktop bridge is present without ?fixture', async () => {
     ;(globalThis as { dshDesktop?: unknown }).dshDesktop = {
       invoke: async () => ({ status: 200, headers: {}, body: '{}' }),
       onMux: () => () => {},
@@ -73,9 +72,29 @@ describe('connection client apply', () => {
       loadBundle: async () => '',
     }
     ;(globalThis as Win).location = { hostname: '', search: '', origin: 'null' }
+    const ctx = new Context()
+    await ctx.plugin({ apply, inject: [] })
+    expect(ctx.get('connection')).toBeUndefined()
+  })
+
+  it('still provides the fixture client when ?fixture is set even if the desktop bridge exists', async () => {
+    ;(globalThis as { dshDesktop?: unknown }).dshDesktop = {
+      invoke: async () => ({ status: 200, headers: {}, body: '{}' }),
+      onMux: () => () => {},
+      onHost: () => () => {},
+      loadBundle: async () => '',
+    }
+    ;(globalThis as Win).location = { hostname: 'localhost', search: '?fixture', origin: 'http://localhost' }
     const handle = await mount()
-    expect(handle.api).toBeInstanceOf(IpcApiClient)
-    expect(handle.isLoopback).toBe(true)
+    expect(handle.api).toBeInstanceOf(FixtureApiClient)
+  })
+
+  it('does not statically import the IPC client implementation', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = readFileSync(new URL('../src/client/index.ts', import.meta.url), 'utf8')
+    expect(src).not.toMatch(/ipc-api-client/)
+    expect(src).not.toMatch(/IpcApiClient/)
+    expect(src).not.toMatch(/ipcDoFetch/)
   })
 
   it('mounts ctx.connection with the real client when no ?fixture switch is present', async () => {

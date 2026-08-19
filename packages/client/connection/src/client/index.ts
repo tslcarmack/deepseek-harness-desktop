@@ -1,18 +1,16 @@
 /**
  * Browser wire client. The plugin selects fixture or HTTP transport, provides
  * the shared API client, and lets the runtime object layer start the stream
- * controller with its sinks.
+ * controller with its sinks. It does not construct the IPC client.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { HostDescription, IApiClient } from './api.ts'
-import { ConnectionController, type ConnectionConfig, type ConnectionSinks, type ConnectionState } from './connection.ts'
+import type { IApiClient } from './api.ts'
 import { FixtureApiClient } from './fixture.ts'
-import { IpcApiClient } from './ipc-api-client.ts'
 import { readDshDesktop } from './dsh-desktop.ts'
+import { createConnectionHandle } from './handle.ts'
 import { WebApiClient } from './web-api-client.ts'
 import { createWebConnectionRpc } from './rpc.ts'
 import { isLoopbackHostname } from '../loopback-hostname.ts'
-import type { ClientConnectionRpc } from '../rpc.ts'
 
 // ---- Contract re-exports (browser-safe apiproxy channels + core types) ----
 export type {
@@ -40,108 +38,30 @@ export {
 
 // Connection loop types are public through ConnectionHandle.start; the
 // controller remains package-internal.
-export type { ConnectionConfig, ConnectionSinks, ConnectionState }
+export type { ConnectionConfig, ConnectionSinks, ConnectionState } from './connection.ts'
 export type { ClientConnectionRpc } from '../rpc.ts'
-
-/** Observable Host description published by each completed connection handshake. */
-export interface HostDescriptionSource {
-  /** Latest connected-generation description; absent before connect and while reconnecting. */
-  getSnapshot(): HostDescription | undefined
-  /** Subscribe to description replacement and connection loss. */
-  subscribe(listener: () => void): () => void
-}
+export type { ConnectionHandle, HostDescriptionSource } from './handle.ts'
 
 /** Required services (none — this is the wire root). */
 export const inject: string[] = []
 
 /**
- * The ctx.connection service API: the API client plus a one-shot
- * controller starter (the runtime plugin supplies sinks when its object layer
- * is ready — connection stays consumer-agnostic).
- */
-export interface ConnectionHandle {
-  /** Shared api client (fixture, IPC, or HTTP, decided at boot from the page and preload bridge). */
-  readonly api: IApiClient
-  /** Whether the current page authority is loopback; non-browser contexts and the desktop preload bridge default to true. */
-  readonly isLoopback: boolean
-  /** Generation-scoped Host facts, including native path-open capability. */
-  readonly hostDescription: HostDescriptionSource
-  /** Generic logical RPC channels over the same Connection transport. */
-  readonly rpc: ClientConnectionRpc
-  /**
-   * Start the connect/pump/reconnect loop with the consumer's frame sinks.
-   * One consumer owns the streams (the runtime object layer); a second call
-   * throws.
-   * @param sinks - frame/state callbacks.
-   * @param config - reconnect/backoff tunables.
-   * @returns stop handle for the loop.
-   */
-  start(sinks: ConnectionSinks, config?: ConnectionConfig): { stop(): void }
-}
-
-/**
- * Client plugin body: pick the api by page mode and provide ctx.connection.
+ * Client plugin body: provide fixture or HTTP transport as ctx.connection.
+ * When the desktop preload bridge is present and `?fixture` is absent, this
+ * half does not provide — the desktop-app client half owns the IPC carrier.
  * @param ctx - client cordis context.
  */
 export function apply(ctx: Context): void {
   const pageLocation = typeof location === 'undefined' ? undefined : location
   const fixture = pageLocation !== undefined && new URLSearchParams(pageLocation.search).has('fixture')
-  const fixtureClient = fixture ? new FixtureApiClient() : undefined
   const desktop = readDshDesktop()
-  const api: IApiClient = fixtureClient ?? (desktop !== undefined ? new IpcApiClient() : new WebApiClient())
+  if (!fixture && desktop !== undefined) return
+  const fixtureClient = fixture ? new FixtureApiClient() : undefined
+  const api: IApiClient = fixtureClient ?? new WebApiClient()
   const rpc = fixtureClient?.rpc ?? createWebConnectionRpc()
-  let started = false
-  let description: HostDescription | undefined
-  const descriptionListeners = new Set<() => void>()
-  const publishDescription = (next: HostDescription | undefined): void => {
-    if (Object.is(description, next)) return
-    description = next
-    for (const listener of [...descriptionListeners]) {
-      try {
-        listener()
-      } catch (error) {
-        console.error('[web-runtime] host-description listener threw:', error)
-      }
-    }
-  }
-  const handle: ConnectionHandle = {
+  ctx.provide('connection', createConnectionHandle(
     api,
-    isLoopback: desktop !== undefined || pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
-    hostDescription: {
-      getSnapshot: () => description,
-      subscribe: (listener) => {
-        descriptionListeners.add(listener)
-        return () => { descriptionListeners.delete(listener) }
-      },
-    },
     rpc,
-    start(sinks, config) {
-      if (started) throw new Error('connection: the stream loop is already owned by another consumer')
-      started = true
-      const controller = new ConnectionController(api, {
-        ...sinks,
-        onConnected: (next) => {
-          publishDescription(next)
-          // A description subscriber may synchronously stop the loop. In that
-          // case publishDescription(undefined) has already retracted this
-          // generation, so do not leak its stale connected notification to
-          // the consumer sink afterward.
-          if (!Object.is(description, next)) return
-          sinks.onConnected?.(next)
-        },
-        onStateChange: (state) => {
-          if (state === 'reconnecting') publishDescription(undefined)
-          sinks.onStateChange?.(state)
-        },
-      }, config ?? {})
-      controller.start()
-      return {
-        stop: () => {
-          controller.stop()
-          publishDescription(undefined)
-        },
-      }
-    },
-  }
-  ctx.provide('connection', handle)
+    desktop !== undefined || pageLocation === undefined || isLoopbackHostname(pageLocation.hostname),
+  ))
 }
