@@ -12,11 +12,14 @@ export interface IpcFetchRequest {
 
 /**
  * Unary IPC response the preload bridge returns to the renderer.
+ * JSON and other textual bodies stay UTF-8 strings. ZIP and other non-textual
+ * bodies use `bodyEncoding: 'base64'` so binary octets survive structured clone.
  */
 export interface IpcFetchResponse {
   status: number
   headers: Record<string, string>
   body: string
+  bodyEncoding?: 'utf8' | 'base64'
 }
 
 /**
@@ -26,7 +29,7 @@ export interface DshDesktopBridge {
   /**
    * Post one unary envelope and wait for the matching ServerResponse JSON.
    * @param request - method, URL, headers, and JSON body.
-   * @returns HTTP-shaped status, headers, and body from the shared fetch handler.
+   * @returns HTTP-shaped status, headers, and body from the shared fetch handler. Non-textual bodies set `bodyEncoding` to `base64`.
    */
   invoke(request: IpcFetchRequest): Promise<IpcFetchResponse>
   /**

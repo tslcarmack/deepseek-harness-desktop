@@ -36,6 +36,7 @@ async function main(): Promise<void> {
   requireFile(indexHtml, 'run `pnpm --filter @deepseek-ai/dsh-desktop build`')
   const { patches, args } = parseDesktopArgv(process.argv, fileURLToPath(import.meta.url))
   await app.whenReady()
+  process.stderr.write('dsh: booting desktop profile\n')
   const { ctx } = await runProfile({
     environment: loadLayeredEnv('dsh'),
     profile: 'desktop',
@@ -77,4 +78,8 @@ async function main(): Promise<void> {
   await window.loadFile(indexHtml)
 }
 
-void main()
+void main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.stack ?? error.message : String(error)
+  process.stderr.write(`dsh: desktop main failed\n${message}\n`)
+  app.exit(1)
+})

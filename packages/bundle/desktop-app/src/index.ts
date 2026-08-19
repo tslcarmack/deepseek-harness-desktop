@@ -41,7 +41,7 @@ export interface DesktopRuntimeImpl extends DesktopRuntime {
   /**
    * Run one preload invoke envelope through the installed `/api` fetch handler.
    * @param request - method, URL, headers, and body from the renderer.
-   * @returns HTTP-shaped status, headers, and body. 503 when no handler is installed.
+   * @returns HTTP-shaped status, headers, and body. Non-textual bodies are base64. 503 when no handler is installed.
    */
   fetchFromPreload(request: IpcFetchRequest): Promise<IpcFetchResponse>
 }
@@ -59,6 +59,8 @@ export interface IpcFetchResponse {
   status: number
   headers: Record<string, string>
   body: string
+  /** Absent or `utf8` for textual bodies; `base64` for ZIP and other non-textual payloads. */
+  bodyEncoding?: 'utf8' | 'base64'
 }
 
 function clientIdFromBundleUrl(url: string): string {
@@ -117,8 +119,20 @@ export function apply(ctx: Context): void {
       const response = await apiFetch(new Request(request.url, init))
       const headers: Record<string, string> = {}
       response.headers.forEach((value, key) => { headers[key] = value })
-      return { status: response.status, headers, body: await response.text() }
+      const encoded = await encodeIpcFetchBody(response)
+      return { status: response.status, headers, ...encoded }
     },
   }
   ctx.provide('desktopRuntime', runtime)
+}
+
+function isTextualIpcContentType(contentType: string): boolean {
+  const media = contentType.split(';', 1)[0]!.trim().toLowerCase()
+  return media === '' || media.startsWith('text/') || media === 'application/json' || media.endsWith('+json')
+}
+
+async function encodeIpcFetchBody(response: Response): Promise<{ body: string; bodyEncoding?: 'base64' }> {
+  const contentType = response.headers.get('content-type') ?? ''
+  if (isTextualIpcContentType(contentType)) return { body: await response.text() }
+  return { body: Buffer.from(await response.arrayBuffer()).toString('base64'), bodyEncoding: 'base64' }
 }

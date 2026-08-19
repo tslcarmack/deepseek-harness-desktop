@@ -1321,9 +1321,6 @@ importers:
       '@deepseek-ai/dsh-client-ui-deliverables':
         specifier: workspace:^
         version: link:../../client/ui-deliverables
-      '@deepseek-ai/dsh-client-ui-directory-picker-browse':
-        specifier: workspace:^
-        version: link:../../client/ui-directory-picker-browse
       '@deepseek-ai/dsh-client-ui-directory-picker-native':
         specifier: workspace:^
         version: link:../../client/ui-directory-picker-native
@@ -1405,12 +1402,6 @@ importers:
       '@deepseek-ai/dsh-host-apiproxy':
         specifier: workspace:^
         version: link:../../host/apiproxy
-      '@deepseek-ai/dsh-host-directory-picker-auto':
-        specifier: workspace:^
-        version: link:../../host/directory-picker-auto
-      '@deepseek-ai/dsh-host-directory-picker-browse':
-        specifier: workspace:^
-        version: link:../../host/directory-picker-browse
       '@deepseek-ai/dsh-host-directory-picker-native':
         specifier: workspace:^
         version: link:../../host/directory-picker-native

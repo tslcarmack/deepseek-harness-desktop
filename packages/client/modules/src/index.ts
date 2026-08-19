@@ -198,7 +198,7 @@ export class ClientModuleRegistry extends Service {
 
   /**
    * Build the service: subscribe, seed, and run the activation flush.
-   * @param ctx - plugin context carrying loader; `webServer` is optional.
+   * @param ctx - plugin context carrying loader; HTTP `/plugins` and the index tap mount when `webServer` appears.
    */
   constructor(ctx: Context) {
     super(ctx, 'clientModules')
@@ -238,17 +238,16 @@ export class ClientModuleRegistry extends Service {
       throw new ClientPackageCompositionError(failures)
     }
 
-    const webServer = ctx.get('webServer')
-    if (webServer !== undefined) {
-      ctx.effect(
-        () => webServer.register({ kind: 'prefix', path: '/plugins', handler: this.serveBundle }),
+    ctx.inject(['webServer'], (httpCtx) => {
+      httpCtx.effect(
+        () => httpCtx.webServer.register({ kind: 'prefix', path: '/plugins', handler: this.serveBundle }),
         'client-modules: bundle route',
       )
-      ctx.effect(
-        () => webServer.tapIndex(html => injectBootManifest(html, this.composed)),
+      httpCtx.effect(
+        () => httpCtx.webServer.tapIndex(html => injectBootManifest(html, this.composed)),
         'client-modules: boot manifest injection',
       )
-    }
+    })
   }
 
   /**

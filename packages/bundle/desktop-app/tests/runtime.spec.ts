@@ -124,4 +124,57 @@ describe('desktopRuntime glue', () => {
     expect(seen[1]!.method).toBe('GET')
     expect(getReply.status).toBe(200)
   })
+
+  it('base64-encodes non-textual preload bodies so ZIP bytes survive IPC', async () => {
+    const ctx = new Context()
+    apply(ctx)
+    const runtime = ctx.get('desktopRuntime') as DesktopRuntimeImpl
+    const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xff])
+    runtime.setApiFetch(async () => new Response(zip, {
+      status: 200,
+      headers: { 'content-type': 'application/zip' },
+    }))
+    const reply = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/api/session.export?sessionId=s1',
+      method: 'GET',
+      headers: {},
+      body: null,
+    })
+    expect(reply.status).toBe(200)
+    expect(reply.bodyEncoding).toBe('base64')
+    expect(Buffer.from(reply.body, 'base64')).toEqual(Buffer.from(zip))
+  })
+
+  it('keeps empty, text, and +json content types as UTF-8 IPC bodies', async () => {
+    const ctx = new Context()
+    apply(ctx)
+    const runtime = ctx.get('desktopRuntime') as DesktopRuntimeImpl
+    runtime.setApiFetch(async (request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/empty') {
+        const response = new Response('n')
+        response.headers.delete('content-type')
+        return response
+      }
+      if (url.pathname === '/ld') {
+        return new Response('{}', { headers: { 'content-type': 'application/ld+json' } })
+      }
+      return new Response('hi', { headers: { 'content-type': 'text/plain; charset=utf-8' } })
+    })
+    const empty = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/empty', method: 'GET', headers: {}, body: null,
+    })
+    expect(empty.body).toBe('n')
+    expect(empty.bodyEncoding).not.toBe('base64')
+    const ld = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/ld', method: 'GET', headers: {}, body: null,
+    })
+    expect(ld.body).toBe('{}')
+    expect(ld.bodyEncoding).not.toBe('base64')
+    const plain = await runtime.fetchFromPreload({
+      url: 'http://127.0.0.1/plain', method: 'GET', headers: {}, body: null,
+    })
+    expect(plain.body).toBe('hi')
+    expect(plain.bodyEncoding).not.toBe('base64')
+  })
 })

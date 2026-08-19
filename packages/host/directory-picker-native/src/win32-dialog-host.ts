@@ -12,6 +12,17 @@ import { fileURLToPath } from 'node:url'
 import type { Win32DialogWorkerData } from './win32-dialog-worker.ts'
 
 /**
+ * Environment for the Win32 dialog child. `ELECTRON_RUN_AS_NODE` is required
+ * when `process.execPath` is `electron.exe`; plain Node ignores the variable.
+ * @param title - dialog title (`DSH_DIALOG_TITLE`).
+ * @param existing - parent environment.
+ * @returns env for `spawn(execPath, args, { env })`.
+ */
+export function dialogWorkerEnv(title: string, existing: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...existing, DSH_DIALOG_TITLE: title, ELECTRON_RUN_AS_NODE: '1' }
+}
+
+/**
  * Spawn the dialog child process. Built consumers launch the bundled CJS
  * entry next to this module under plain node; unbuilt (source) consumers
  * bootstrap tsx first, mirroring the dsh CLI's source launch. The dialog is
@@ -21,7 +32,7 @@ import type { Win32DialogWorkerData } from './win32-dialog-worker.ts'
  * @returns the spawned child process.
  */
 export function spawnDialogWorker(data: Win32DialogWorkerData): ReturnType<typeof spawn> {
-  const env = { ...process.env, DSH_DIALOG_TITLE: data.title }
+  const env = dialogWorkerEnv(data.title)
   const stdio: StdioOptions = ['ignore', 'inherit', 'inherit', 'ipc']
   /* v8 ignore next 3 -- the built-output arm: tests always run unbuilt (src/) */
   if (!import.meta.url.endsWith('.ts')) {

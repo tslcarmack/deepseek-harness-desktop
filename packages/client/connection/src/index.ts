@@ -122,14 +122,37 @@ const PRIVILEGED_METHODS = new Set([
 ])
 
 /**
+ * Rewrite a preload-bridge Request so the loopback Host fence can read it.
+ * @param request - the renderer invoke, typically without a Host header.
+ * @returns a new Request on `http://127.0.0.1` with Host stamped and page Origin stripped.
+ */
+function toDesktopLoopbackRequest(request: Request): Request {
+  const url = new URL(request.url)
+  const headers = new Headers(request.headers)
+  headers.set('host', '127.0.0.1')
+  headers.delete('origin')
+  headers.delete('referer')
+  headers.delete('sec-fetch-site')
+  const init: RequestInit = { method: request.method, headers }
+  if (request.body !== null) {
+    Object.assign(init, { body: request.body, duplex: 'half' })
+  }
+  return new Request(`http://127.0.0.1${url.pathname}${url.search}`, init)
+}
+
+/**
  * Mounts the API gateway under the browser transport prefix, or binds the
  * same handler to `desktopRuntime` when no HTTP server is present. Every
  * HTTP request on the prefix passes the browser-trust fence first
  * (DNS-rebinding and cross-site defense —
  * [api-request-trust](./api-request-trust.ts)); privileged methods
  * additionally pass it with an empty trust list, which pins them to
- * loopback. Desktop IPC reconstructs requests as `http://127.0.0.1/api/…`
- * so that fence still applies.
+ * loopback. Desktop IPC rewrites the URL to `http://127.0.0.1/api/…` and
+ * stamps `Host: 127.0.0.1` (a Fetch `Request` has no Host header, unlike
+ * Node's IncomingMessage) so that fence still applies; renderer `Origin`
+ * (`null` on `file:`) is dropped because the preload bridge, not the page
+ * origin, is the privilege. The rewritten request then enters the same
+ * shared `/api` handler Web uses (Typert interceptors, then ApiProxy).
  * @param ctx - Host plugin context.
  * @param config - resolved plugin config (schema defaults applied).
  */
@@ -207,19 +230,7 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
     })
   }
   if (desktopRuntime !== undefined) {
-    ctx.effect(() => desktopRuntime.setApiFetch(async (request) => {
-      const url = new URL(request.url)
-      const local = new Request(`http://127.0.0.1${url.pathname}${url.search}`, request)
-      const method = url.pathname.startsWith(`${API_PATH}/`)
-        ? url.pathname.slice(API_PATH.length + 1)
-        : undefined
-      if (method !== undefined && PRIVILEGED_METHODS.has(method) && !isTrustedApiRequest(local, [])) {
-        return new Response('forbidden', { status: 403 })
-      }
-      const apiProxy = ctx.get('apiProxy')
-      if (apiProxy === undefined) return new Response('not found', { status: 404 })
-      return toFetchHandler(apiProxy).fetch(local)
-    }), 'client-connection: desktop ipc fetch')
+    ctx.effect(() => desktopRuntime.setApiFetch(request => fetchHandler.fetch(toDesktopLoopbackRequest(request))), 'client-connection: desktop ipc fetch')
     ctx.inject(['apiProxy'], (apiCtx) => {
       const downlinks = new IpcDownlinks(apiCtx.apiProxy, desktopRuntime)
       apiCtx.effect(() => downlinks.start(), 'client-connection: ipc downlinks')

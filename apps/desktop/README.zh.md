@@ -14,6 +14,6 @@ Electron 主进程就是 harness 进程：它通过 [`runProfile`](../cli/src/pr
 
 ## 已知限制与暂缓事项
 
-- **必须批准 Electron** — pnpm 10 会拦住 Electron 的 postinstall，直到 `pnpm approve-builds` 放行 `electron`。
+- **必须批准 Electron，并解开其平台二进制** — pnpm 10 会拦住 Electron 的 postinstall，直到 `pnpm approve-builds` 放行 `electron`。`pnpm install` 不会重试这次下载。若安装时跳过了脚本，运行 `pnpm --filter @deepseek-ai/dsh-desktop rebuild`，并等到 `apps/desktop/node_modules/electron/path.txt` 出现。在 Node 24 上，Electron 的解压可能在该文件写完之前就返回；若 `path.txt` 仍不存在，把 `%LOCALAPPDATA%\electron\Cache` 下缓存的 zip 解压到该包的 `dist`，并写入 `path.txt`（Windows 上为 `electron.exe`）。
 - **preload、renderer、frontend dist 和客户端 bundle 必须已经构建** — 首次启动需要先 `pnpm run build` 客户端包，再 `pnpm --filter @deepseek-ai/dsh-desktop build` 生成 `lib/preload.cjs` 和 `dist/`。
 - **只做源码启动** — 第一版没有安装包、托盘、应用菜单、通知或打包可执行文件。
