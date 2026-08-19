@@ -1,7 +1,7 @@
 /** Desktop API carrier: unary invoke plus mux/host JSON downlinks over the preload bridge. */
 
-import type { ApiProxy, HostFrame, MuxFrame, RpcRequest, ServerRequest } from './api.ts'
-import { AbstractApiClient } from './api.ts'
+import type { ApiProxy, HostFrame, MuxFrame, RpcRequest, ServerRequest } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 import { hostFrameSchema, muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import { serverRequestSchema } from '@deepseek-ai/dsh-host-apiproxy/api/rpc.schema'
 import { readDshDesktop, type DshDesktopBridge } from './dsh-desktop.ts'
@@ -11,7 +11,7 @@ type Parser<F> = { parse(value: unknown): F }
 
 function requireDesktop(): DshDesktopBridge {
   const desktop = readDshDesktop()
-  if (desktop === undefined) throw new Error('client-connection: IpcApiClient requires window.dshDesktop')
+  if (desktop === undefined) throw new Error('desktop-app: IpcApiClient requires window.dshDesktop')
   return desktop
 }
 
@@ -24,18 +24,36 @@ function headersFromInit(init: RequestInit | undefined): Record<string, string> 
   return headers
 }
 
+/**
+ * Unary fetch through the preload invoke bridge (ApiProxy methods, generic `/api` RPC, and ZIP downloads).
+ * @param input - request URL (path is what main rewrites onto loopback).
+ * @param init - method, headers, and body.
+ * @returns HTTP-shaped Response from main; base64 IPC bodies are decoded to bytes.
+ */
+export async function ipcDoFetch(input: URL, init?: RequestInit): Promise<Response> {
+  const desktop = requireDesktop()
+  const body = typeof init?.body === 'string' ? init.body : init?.body == null ? null : String(init.body)
+  const reply = await desktop.invoke({
+    url: input.href,
+    method: init?.method ?? 'GET',
+    headers: headersFromInit(init),
+    body,
+  })
+  return new Response(bodyInitFromIpc(reply), { status: reply.status, headers: reply.headers })
+}
+
+function bodyInitFromIpc(reply: { body: string; bodyEncoding?: 'utf8' | 'base64' }): BodyInit {
+  if (reply.bodyEncoding !== 'base64') return reply.body
+  const binary = atob(reply.body)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
 /** Browser platform subclass: unary/respond use the preload invoke; mux/host use JSON subscriptions. */
 export class IpcApiClient extends AbstractApiClient {
-  protected async doFetch(input: URL, init?: RequestInit): Promise<Response> {
-    const desktop = requireDesktop()
-    const body = typeof init?.body === 'string' ? init.body : init?.body == null ? null : String(init.body)
-    const reply = await desktop.invoke({
-      url: input.href,
-      method: init?.method ?? 'GET',
-      headers: headersFromInit(init),
-      body,
-    })
-    return new Response(reply.body, { status: reply.status, headers: reply.headers })
+  protected doFetch(input: URL, init?: RequestInit): Promise<Response> {
+    return ipcDoFetch(input, init)
   }
 
   protected override openMux(
@@ -75,7 +93,7 @@ export class IpcApiClient extends AbstractApiClient {
         full = serverRequestSchema.parse(JSON.parse(json) as unknown)
         frame = frameSchema.parse(full.payload)
       } catch (error) {
-        console.error(`[client-connection] dropping malformed IPC frame on ${stream}:`, error)
+        console.error(`[desktop-app] dropping malformed IPC frame on ${stream}:`, error)
         return
       }
       this.onEnvelope(full)

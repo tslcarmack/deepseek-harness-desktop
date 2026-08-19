@@ -13,7 +13,6 @@
     "src/client/fixture.ts",
     "src/client/handle.ts",
     "src/client/index.ts",
-    "src/client/ipc-api-client.ts",
     "src/client/random-uuid.ts",
     "src/client/rpc.ts",
     "src/client/web-api-client.ts",

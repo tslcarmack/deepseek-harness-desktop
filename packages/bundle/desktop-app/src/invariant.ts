@@ -15,7 +15,7 @@ export const inject = ['invariants']
 
 /**
  * No runtime invariant: window and IPC effects live in `apps/desktop` and
- * `dsh-client-connection`; this glue only provides `desktopRuntime` whose
+ * this package's client half; the host glue only provides `desktopRuntime` whose
  * `setApiFetch` disposer is owned by the connection fiber.
  */
 const install: InvariantInstaller = () => {}
